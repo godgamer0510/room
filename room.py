@@ -1,5 +1,5 @@
 import discord
-import os  # 追加: 環境変数を読み込むためのライブラリ
+import os
 from discord.ext import commands
 from discord.ui import View, Button, Select
 
@@ -68,7 +68,13 @@ class RoomCreationView(View):
 
         try:
             if self.channel_type == discord.ChannelType.text:
-                created_channel = await guild.create_text_channel(name=room_name, overwrites=overwrites, category=category)
+                # 【変更点1】 topicに「Owner:ユーザーID」を埋め込む
+                created_channel = await guild.create_text_channel(
+                    name=room_name, 
+                    overwrites=overwrites, 
+                    category=category,
+                    topic=f"Owner:{self.author.id}"  # ここが重要！所有権の証拠になります
+                )
                 await created_channel.send(f"{self.author.mention} 部屋を作成しました！\nメンバー: {', '.join([m.mention for m in self.members])}\n\nこの部屋を消すには `!erace` と入力してください。")
             else:
                 created_channel = await guild.create_voice_channel(name=room_name, overwrites=overwrites, category=category)
@@ -101,13 +107,28 @@ async def create(ctx):
 
     await ctx.send(embed=embed, view=view)
 
+# 【変更点2】 !erace コマンドに安全装置を追加
 @bot.command(aliases=['erase'])
 async def erace(ctx):
     channel = ctx.channel
-    await ctx.send("この部屋を削除します...")
-    await channel.delete()
 
-# --- 変更点: 環境変数からトークンを取得 ---
+    # 安全装置1: チャンネル名が "🔒-" で始まっているか確認
+    # (普通のチャンネルを誤って消さないための第一関門)
+    if not channel.name.startswith("🔒-"):
+        await ctx.send("❌ このコマンドはBotが作成した一時ルームでのみ使用できます。")
+        return
+
+    # 安全装置2: トピックに書かれたIDと実行者のIDが一致するか確認
+    # (管理者は無条件で削除可能にする場合は `or ctx.author.guild_permissions.administrator` を残す)
+    topic = channel.topic or ""  # トピックが空の場合は空文字にする
+    owner_sign = f"Owner:{ctx.author.id}"
+
+    if owner_sign in topic or ctx.author.guild_permissions.administrator:
+        await ctx.send("🗑️ この部屋を削除します...")
+        await channel.delete()
+    else:
+        await ctx.send("⛔ 部屋を作成した本人（または管理者）しか削除できません。")
+
 token = os.getenv("DISCORD_TOKEN")
 
 if token is None:
